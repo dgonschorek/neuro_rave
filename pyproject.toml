@@ -1,0 +1,24 @@
+[project]
+name = "neuro-rave"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "dgonschorek", email = "dominic.gonschorek@cin.uni-tuebingen.de" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=7.3.0",
+    "lightning>=2.6.5",
+    "matplotlib>=3.11.0",
+    "numpy>=2.4.6",
+    "pandas>=3.0.3",
+    "torch>=2.12.0",
+]
+
+[project.scripts]
+neuro-rave = "neuro_rave:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
