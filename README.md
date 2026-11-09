@@ -4,10 +4,10 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
 
-Neuro-RAVE is a PyTorch package for reducing inter-experimental variability (batch effects) in aligned, fixed-length time-series windows. During training, each window has a known domain ID that identifies its batch, such as a recording session or experiment.
+Neuro-RAVE is a PyTorch package for reducing inter-experimental variability (batch effects) in aligned, fixed-length time-series data. Each training sample is a time series with a domain ID that identifies its batch, such as a recording session or experiment.
 
-- **RAVE (unsupervised)** trains an autoencoder to reconstruct the input windows. An adversarial objective pushes the encoder to make the domain harder to predict from the embedding.
-- **RAVE+ (semi-supervised)** adds a classification objective on the labeled windows. This encourages the embedding to retain class-relevant information and supports label prediction for unlabeled windows, including in other domains.
+- **RAVE (unsupervised)** trains an autoencoder to reconstruct the input time series. An adversarial objective pushes the encoder to make the domain harder to predict from the embedding.
+- **RAVE+ (semi-supervised)** adds a classification objective on the labeled samples. This encourages the embedding to retain class-relevant information and supports label prediction for unlabeled time series, including in other domains.
 
 The methods were introduced by Gonschorek et al. at NeurIPS 2021. [Paper](https://proceedings.neurips.cc/paper_files/paper/2021/hash/1e5eeb40a3fce716b244599862fd2200-Abstract.html) · [Original research code](https://github.com/eulerlab/rave)
 
@@ -23,15 +23,15 @@ For CUDA training, install the matching PyTorch build first and set `device="cud
 
 ### Quick example
 
-This example uses random windows to illustrate the API. Replace `X`, `domains` and `y` with your own data.
+This example uses random time series to illustrate the API. Replace `X`, `domains` and `y` with your own data.
 
 ```python
 import numpy as np
 from neuro_rave import RAVE, RAVEPlus
 
 rng = np.random.default_rng(0)
-X = rng.normal(size=(200, 50))            # windows × time points
-domains = np.repeat(["s1", "s2"], 100)   # one domain ID per window
+X = rng.normal(size=(200, 50))            # samples × time points
+domains = np.repeat(["s1", "s2"], 100)   # one domain ID per sample
 
 rave = RAVE(latent_dim=8, epochs=5, seed=0).fit(X, domains=domains)
 Z = rave.transform(X)                    # (200, 8)
@@ -68,7 +68,7 @@ python -m pip install ".[notebook]"
 python -m jupyter lab examples/quickstart.ipynb
 ```
 
-The notebook uses synthetic two-channel waveforms from three sessions and leaves one session unlabeled. To use your own data, replace the data cell with your windows, domain IDs and class labels. The first code cell shows which Python interpreter and package installation the notebook is using.
+The notebook uses synthetic two-channel waveforms from three sessions and leaves one session unlabeled. To use your own data, replace the data cell with your time-series data, domain IDs and class labels. The first code cell shows which Python interpreter and package installation the notebook is using.
 
 If your Jupyter installation runs outside this environment, register a kernel from the activated environment and select **Python (neuro-rave)** in Jupyter.
 
@@ -96,7 +96,7 @@ CI runs the installed package tests on Linux with the minimum dependencies and o
 
 ## Design decisions and structure
 
-The encoder, decoder, domain discriminator and RAVE+ class head are small ReLU networks. The encoder flattens each window internally and the decoder restores its original shape. Training alternates between making the embedding less useful for domain prediction and improving the domain discriminator.
+The encoder, decoder, domain discriminator and RAVE+ class head are small ReLU networks. The encoder flattens each time series internally and the decoder restores its original shape. Training alternates between making the embedding less useful for domain prediction and improving the domain discriminator.
 
 | Path | Contents |
 | --- | --- |
@@ -109,11 +109,11 @@ The encoder, decoder, domain discriminator and RAVE+ class head are small ReLU n
 
 | Input | Requirements |
 | --- | --- |
-| `X` | Real-valued windows shaped `(samples, time)` or `(samples, time, channels)`. Rows share the same time grid and channel order. Values must be finite after conversion to float32. |
-| `domains` | One string or integer ID per window, with at least two distinct domains. |
-| `y` for RAVE+ | One string or integer class label per window, with `None` for unknown labels. At least two classes must be observed. |
+| `X` | Real-valued time-series data shaped `(samples, time)` or `(samples, time, channels)`. Each sample is one time series. Samples share the same time grid and channel order. Values must be finite after conversion to float32. |
+| `domains` | One string or integer ID per sample, with at least two distinct domains. |
+| `y` for RAVE+ | One string or integer class label per sample, with `None` for unknown labels. At least two classes must be observed. |
 
-Prepare and align your windows before fitting. At inference, supply windows with the same time and channel layout. `transform` returns a NumPy array of embeddings, `reconstruct` returns windows in the original shape, and RAVE+ can return original class labels or probabilities in `classes_` order. Each call to `fit` starts a fresh training run and returns the model.
+Align your time series before fitting. Use the same time and channel layout at inference. `transform` returns a NumPy array of embeddings, `reconstruct` returns the reconstructed time series in the input shape, and RAVE+ can return original class labels or probabilities in `classes_` order. Each call to `fit` starts a fresh training run and returns the model.
 
 <details>
 <summary>Model settings and fitted attributes</summary>
@@ -130,17 +130,17 @@ Prepare and align your windows before fitting. At inference, supply windows with
 | `device` | `"cpu"` | `"cpu"` or `"cuda"` |
 | `seed` | `None` | Seed for initialization and shuffling |
 
-After fitting, `input_shape_` records the window layout, `domains_` and `classes_` list sorted IDs and labels, and `history_` contains per-epoch training losses. `classes_` is available on RAVE+.
+After fitting, `input_shape_` records the time and channel dimensions, `domains_` and `classes_` list sorted IDs and labels, and `history_` contains per-epoch training losses. `classes_` is available on RAVE+.
 
 </details>
 
 <details>
 <summary>Training objective and implementation differences</summary>
 
-1. The encoder, decoder and RAVE+ class head minimize `reconstruction_mse − domain_weight × domain_ce + class_weight × class_ce` with the domain discriminator frozen. The class loss uses labeled windows only.
+1. The encoder, decoder and RAVE+ class head minimize `reconstruction_mse − domain_weight × domain_ce + class_weight × class_ce` with the domain discriminator frozen. The class loss uses labeled samples only.
 2. The discriminator minimizes domain cross-entropy using detached embeddings from the updated encoder.
 
-The objective follows equations (3) and (4) of the paper. The implementation averages per-domain reconstruction and domain losses and per-class classification losses within each minibatch. The original code sums those group means. The simple networks support single-window batches. Each minibatch gets one model step and one discriminator step with Adam betas `(0.5, 0.999)`. The v0.1 API works with prepared windows and in-memory fitted models.
+The objective follows equations (3) and (4) of the paper. The implementation averages per-domain reconstruction and domain losses and per-class classification losses within each minibatch. The original code sums those group means. The networks support minibatches with one sample. Each minibatch gets one model step and one discriminator step with Adam betas `(0.5, 0.999)`. The v0.1 API works with prepared time-series data and in-memory fitted models.
 
 </details>
 
@@ -164,7 +164,7 @@ The default `domain_weight=0.1` comes from one dataset and one train/test split.
 <details>
 <summary>Recorded-data comparison</summary>
 
-The comparison used RAVE+ on the local chirp recordings. A stratified subsample of 3,000 labeled cells from dataset A was split by cell. Dataset B supplied unlabeled windows, with eight recordings for training and three for testing. A separate k-nearest-neighbour classifier on held-out embeddings measured domain predictability. On raw traces, its balanced accuracy was 0.999. Chance is 0.5 balanced accuracy and 0.69 log loss.
+The comparison used RAVE+ on the local chirp recordings. A stratified subsample of 3,000 labeled cells from dataset A was split by cell. Dataset B supplied unlabeled bipolar cell responses, with eight recordings for training and three for testing. A separate k-nearest-neighbour classifier on held-out embeddings measured domain predictability. On raw traces, its balanced accuracy was 0.999. Chance is 0.5 balanced accuracy and 0.69 log loss.
 
 The table reports means over five paired seeds.
 
