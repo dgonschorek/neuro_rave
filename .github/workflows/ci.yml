@@ -1,0 +1,90 @@
+name: CPU CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux / minimum dependencies
+            os: ubuntu-latest
+            python: '3.10'
+            minimum: true
+          - name: Windows / notebook
+            os: windows-latest
+            python: '3.13'
+            minimum: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install minimum dependencies and package
+        if: matrix.minimum
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.2.0'
+          python -m pip install 'numpy==1.24.0' 'pytest==8.0.0' .
+      - name: Install package and development dependencies
+        if: matrix.minimum == false
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install '.[dev,notebook]' nbconvert
+      - name: Run tests against the installed package
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip check
+          python -I - <<'PY'
+          from pathlib import Path
+          from sysconfig import get_path
+
+          import neuro_rave
+
+          installed_file = Path(neuro_rave.__file__).resolve()
+          assert installed_file.is_relative_to(Path(get_path('purelib')).resolve()), installed_file
+          print(neuro_rave.__version__, installed_file)
+          PY
+          python -I -m pytest "$GITHUB_WORKSPACE/tests"
+      - name: Run development checks
+        if: matrix.minimum == false
+        run: |
+          python -m ruff check src tests examples
+          python -m ruff format --check src tests examples
+          python -m mypy src
+      - name: Execute the quickstart notebook
+        if: matrix.minimum == false
+        working-directory: ${{ runner.temp }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from shutil import copyfile
+
+          notebook = Path(os.environ['GITHUB_WORKSPACE']) / 'examples' / 'quickstart.ipynb'
+          copyfile(notebook, 'quickstart.ipynb')
+          PY
+          python -m ipykernel install --user --name neuro-rave-ci
+          python -m nbconvert --to notebook --execute \
+            --ExecutePreprocessor.kernel_name=neuro-rave-ci \
+            --ExecutePreprocessor.timeout=180 \
+            --output quickstart-executed.ipynb quickstart.ipynb

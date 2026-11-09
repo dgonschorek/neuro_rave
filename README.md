@@ -14,6 +14,8 @@ This package (`neuro_rave` v0.1) is a fresh, small implementation of both method
 
 **Start here:** [install](#install) → [minimal example](#minimal-example) → [example notebook](#example-notebook) → [check the result on your own data](#check-the-result-on-your-own-data) → [run the tests](#run-the-tests).
 
+See the [changelog](CHANGELOG.md) for release notes.
+
 ## Install
 
 ```bash
@@ -21,6 +23,14 @@ python -m pip install "git+https://github.com/dgonschorek/neuro_rave.git"
 ```
 
 This needs Python 3.10 or newer. The only runtime dependencies are NumPy and PyTorch. For GPU training, install the CUDA build of PyTorch first ([pytorch.org](https://pytorch.org/get-started/locally/)), then run the command above.
+
+For a private repository, Git needs the same credentials it would use to clone the repository. If you use an SSH key for GitHub, install with the SSH URL.
+
+```bash
+python -m pip install "git+ssh://git@github.com/dgonschorek/neuro_rave.git"
+```
+
+For a reproducible install, append `@` followed by a tag or full commit SHA to either URL.
 
 ## Minimal example
 
@@ -59,7 +69,7 @@ New windows passed to `transform`, `reconstruct`, `predict` or `predict_proba` m
 
 ## Example notebook
 
-[`examples/quickstart.ipynb`](examples/quickstart.ipynb) runs both workflows end to end on synthetic two-channel waveforms recorded in three sessions, with class labels unknown (`None`) in one session. It explains the input shapes, plots inputs against their reconstructions, and predicts classes for the unlabeled session. To use your own data, replace the one data cell; the cells after it only use the variable names it defines, so they work for any window length, channel count, domain IDs and labels. It runs on CPU in under a minute.
+[`examples/quickstart.ipynb`](examples/quickstart.ipynb) runs both workflows end to end on synthetic two-channel waveforms recorded in three sessions, with class labels unknown (`None`) in one session. It explains the input shapes, plots inputs against their reconstructions, and predicts classes for the unlabeled session. To use your own data, replace the data cell with your fixed-length windows, domain IDs and labels. The notebook runs on CPU.
 
 The notebook needs a few extra packages (JupyterLab, ipykernel, matplotlib). They live in the `notebook` extra, so the package itself still depends only on NumPy and PyTorch. Install everything into one virtual environment and start Jupyter **from that environment**, so the default kernel is the Python that has `neuro_rave`:
 
@@ -67,7 +77,23 @@ The notebook needs a few extra packages (JupyterLab, ipykernel, matplotlib). The
 git clone https://github.com/dgonschorek/neuro_rave.git
 cd neuro_rave
 python -m venv .venv
-.venv\Scripts\activate            # Windows; on macOS/Linux: source .venv/bin/activate
+```
+
+Activate the environment in Windows PowerShell.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+On macOS or Linux, use this activation command.
+
+```bash
+source .venv/bin/activate
+```
+
+Then install the notebook extra and launch JupyterLab.
+
+```bash
 python -m pip install ".[notebook]"
 python -m jupyter lab examples/quickstart.ipynb
 ```
@@ -106,7 +132,7 @@ python -m ipykernel install --user --name neuro-rave --display-name "Python (neu
 | `epochs` | 100 | Passes over the training data |
 | `batch_size` | 128 | Minibatch size (a final minibatch of one sample is fine) |
 | `learning_rate` | 1e-3 | Learning rate of both Adam optimizers |
-| `domain_weight` | 0.1 | Weight of the adversarial domain term (0 gives a plain autoencoder); see [how the default was chosen](#how-the-default-was-chosen) |
+| `domain_weight` | 0.1 | Weight of the adversarial domain term (0 disables this term); see [how the default was chosen](#how-the-default-was-chosen) |
 | `class_weight` | 1.0 | Weight of the class term (`RAVEPlus` only) |
 | `device` | `"cpu"` | `"cpu"` or `"cuda"` |
 | `seed` | `None` | Seeds initialization and shuffling, so CPU runs are reproducible (`seed=0` works) |
@@ -150,14 +176,14 @@ Removing domain information always costs some signal. If the embedding could be 
 The default `domain_weight=0.1` comes from a single comparison on one recorded dataset ([how the default was chosen](#how-the-default-was-chosen)), and the other defaults were checked only on synthetic data. How much domain information RAVE removes, and how much signal it keeps, depends on your data and on `domain_weight`, so measure both before relying on the embedding:
 
 - **Hold out data the model hasn't seen.** Split by whole recordings or sessions within each domain where you can, rather than by individual windows.
-- **Signal retention:** compute reconstruction error from `reconstruct()` on the held-out windows, per domain, and compare it with a `domain_weight=0` fit (a plain autoencoder). If known classes exist, check that they stay separable in the embedding across domains, for example with a classifier trained on one domain and tested on another.
+- **Signal retention:** compute reconstruction error from `reconstruct()` on the held-out windows, per domain, and compare it with a `domain_weight=0` fit. If known classes exist, check that they stay separable in the embedding across domains, for example with a classifier trained on one domain and tested on another.
 - **Domain removal:** train a separate classifier (for example logistic regression or k-nearest neighbours) to predict the domain from held-out embeddings, and compare its accuracy and log loss with chance and with the `domain_weight=0` fit. The discriminator used during training is not an independent measurement.
 - **Compare a few weights,** starting from the default, for example `domain_weight` 0, 0.1 and 1.0 with several seeds, and pick the setting that removes the most domain information at an acceptable cost in reconstruction and class separability.
 - **Look at the class composition of each domain** before trusting predictions for an unlabeled domain.
 
 **Reading the discriminator loss:** a training discriminator loss near chance (ln K for K balanced domains) is the target.
 - A loss well *below* chance means the domain is still easy to predict.
-- A loss well *above* chance means the encoder is fooling the current discriminator. That also means the embedding still contains domain information.
+- A loss well *above* chance can reflect a discriminator that confidently predicts the wrong domains. The training loss alone cannot quantify how much domain information remains.
 
 The domain discriminator used during training is not an independent measurement. Check domain removal afterwards with a separately trained classifier on held-out data.
 
@@ -184,10 +210,9 @@ Mean over five seeds:
 | **0.1** | 0.273 / 0.432 | 0.650 | **0.805 / 0.420** |
 | 1.0 | 0.297 / 0.469 | 0.635 | 0.811 / 0.408 |
 
-What this showed:
-- Compared with no adversary, 0.1 lowered domain-classifier accuracy in every seed, with no measurable loss in class accuracy. It cost a small, consistent rise in reconstruction error (about 6% on A, 11% on B).
-- 1.0 removed no more domain information than 0.1, at roughly twice the reconstruction cost and lower class accuracy.
-- The domain classifier still reaches about 0.8 at every weight, so domain information is reduced, not removed.
+Compared with the 0 baseline, 0.1 lowered domain-classifier accuracy in every seed. Mean balanced class accuracy on A fell by 0.009, while reconstruction error rose by about 6% on A and 11% on B.
+
+At 0.1 and 1.0, the domain classifier still reached about 0.8 balanced accuracy. The two weights had similar domain-classifier scores, with higher reconstruction error and lower class accuracy at 1.0.
 
 This is one dataset, one stimulus and one split, so treat 0.1 as a starting point and [check the result on your own data](#check-the-result-on-your-own-data). The recordings are **not** included in this repository or package. Get them from the DOI above under its CC BY-NC-SA license, which is separate from this package's MIT license.
 
@@ -208,6 +233,8 @@ The tests are fast and run on CPU in a few seconds. From a clone, in a virtual e
 python -m pip install ".[dev]"
 python -m pytest
 ```
+
+GitHub Actions tests the installed package on Linux with the minimum supported dependencies and on Windows with Python 3.13. The Windows job also runs the quickstart notebook and the development checks below.
 
 ## Development
 
