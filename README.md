@@ -1,10 +1,13 @@
-# neuro-rave
+# Neuro-RAVE: Reducing Batch Effects in Neuroscientific Time-Series Data
 
 [![CPU CI](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![PyTorch 2.2+](https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
 
-A PyTorch package for reducing session or experiment effects in embeddings of aligned time-series windows. **RAVE** learns embeddings and reconstructs windows using domain IDs. **RAVE+** also learns to predict classes from partially labeled training data.
+Neuro-RAVE is a PyTorch package for reducing inter-experimental variability (batch effects) in aligned, fixed-length time-series windows. During training, each window has a known domain ID that identifies its batch, such as a recording session or experiment.
+
+- **RAVE (unsupervised)** trains an autoencoder to reconstruct the input windows. An adversarial objective pushes the encoder to make the domain harder to predict from the embedding.
+- **RAVE+ (semi-supervised)** adds a classification objective on the labeled windows. This encourages the embedding to retain class-relevant information and supports label prediction for unlabeled windows, including in other domains.
 
 The methods were introduced by Gonschorek et al. at NeurIPS 2021. [Paper](https://proceedings.neurips.cc/paper_files/paper/2021/hash/1e5eeb40a3fce716b244599862fd2200-Abstract.html) · [Original research code](https://github.com/eulerlab/rave)
 
@@ -15,8 +18,6 @@ Install the tagged release in a Python 3.10 or newer environment. NumPy and PyTo
 ```bash
 python -m pip install "git+https://github.com/dgonschorek/neuro_rave.git@v0.1.0"
 ```
-
-For a private repository, Git uses your configured credentials. With SSH access, replace `git+https://github.com/` in the command with `git+ssh://git@github.com/`.
 
 For CUDA training, install the matching PyTorch build first and set `device="cuda"`. [PyTorch installation](https://pytorch.org/get-started/locally/)
 
