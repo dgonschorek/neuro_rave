@@ -163,7 +163,7 @@ The default `domain_weight=0.1` comes from one dataset and one train/test split.
 <details>
 <summary>Recorded-data comparison</summary>
 
-The comparison used RAVE+ on the local chirp recordings. Labeled dataset A was stratified to 3,000 cells and split by cell. Dataset B was split into eight training and three test recordings, and its labels were withheld during training. A separate k-nearest-neighbour classifier on held-out embeddings measured domain predictability. On raw traces, its balanced accuracy was 0.999. Chance is 0.5 balanced accuracy and 0.69 log loss.
+The comparison used RAVE+ on the local chirp recordings. A stratified subsample of 3,000 labeled cells from dataset A was split by cell. Dataset B supplied unlabeled windows, with eight recordings for training and three for testing. A separate k-nearest-neighbour classifier on held-out embeddings measured domain predictability. On raw traces, its balanced accuracy was 0.999. Chance is 0.5 balanced accuracy and 0.69 log loss.
 
 The table reports means over five paired seeds.
 
