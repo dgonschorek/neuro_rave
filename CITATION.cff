@@ -1,0 +1,62 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "neuro-rave: RAVE and RAVE+ for removing domain effects from time-series windows"
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/dgonschorek/neuro_rave"
+authors:
+  - family-names: Gonschorek
+    given-names: Dominic
+preferred-citation:
+  type: conference-paper
+  title: "Removing Inter-Experimental Variability from Functional Data in Systems Neuroscience"
+  authors:
+    - family-names: Gonschorek
+      given-names: Dominic
+    - family-names: Höfling
+      given-names: Larissa
+    - family-names: Szatko
+      given-names: Klaudia P.
+    - family-names: Franke
+      given-names: Katrin
+    - family-names: Schubert
+      given-names: Timm
+    - family-names: Dunn
+      given-names: Benjamin
+    - family-names: Berens
+      given-names: Philipp
+    - family-names: Klindt
+      given-names: David
+    - family-names: Euler
+      given-names: Thomas
+  collection-title: "Advances in Neural Information Processing Systems"
+  volume: 34
+  year: 2021
+  url: "https://proceedings.neurips.cc/paper_files/paper/2021/hash/1e5eeb40a3fce716b244599862fd2200-Abstract.html"
+references:
+  - type: data
+    title: "Simulated and recorded responses of mouse retinal bipolar cells to the chirp stimulus"
+    authors:
+      - family-names: Gonschorek
+        given-names: Dominic
+      - family-names: Höfling
+        given-names: Larissa
+      - family-names: Szatko
+        given-names: Klaudia
+      - family-names: Franke
+        given-names: Katrin
+      - family-names: Schubert
+        given-names: Timm
+      - family-names: Dunn
+        given-names: Benjamin
+      - family-names: Berens
+        given-names: Philipp
+      - family-names: Klindt
+        given-names: David
+      - family-names: Euler
+        given-names: Thomas
+    publisher:
+      name: G-Node
+    year: 2021
+    doi: 10.12751/g-node.5iije0
+    license: CC-BY-NC-SA-4.0

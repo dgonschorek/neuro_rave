@@ -5,3 +5,16 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+/data/
+
+# Tool caches and build artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Local assistant files (not part of the release)
+.claude/settings.local.json
+/CLAUDE.md
