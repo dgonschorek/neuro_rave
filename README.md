@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/rave-logo.png" width="420" alt="Neuro-RAVE logo: a turquoise and a purple response trace merge into one line above the word RAVE">
+</p>
+
 # Neuro-RAVE: Reducing Batch Effects in Neuroscientific Time-Series Data
 
 [![CPU CI](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml)
