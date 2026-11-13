@@ -449,7 +449,7 @@ class VAEDANN:
                 f"({n_domains}); every minibatch needs at least one sample per domain."
             )
         checkpoint_every = _positive_int("checkpoint_every", checkpoint_every)
-        smallest = int(np.bincount(domain_codes.codes).min())
+        smallest = int(np.min(np.bincount(domain_codes.codes)))
         per_domain = min(self.batch_size // n_domains, smallest)
         presented_per_epoch = (smallest // per_domain) * per_domain * n_domains
         epochs = self.epochs

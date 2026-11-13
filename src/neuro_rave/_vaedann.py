@@ -52,10 +52,14 @@ class _ReverseGradient(torch.autograd.Function):
         return -ctx.alpha * grad_output, None
 
 
+# ``Function.apply`` is an unannotated method in older PyTorch and a typed builtin in newer
+# releases; binding it to an explicitly typed name keeps the call checked under both.
+_apply_reverse_gradient: Callable[[Tensor, float], Tensor] = _ReverseGradient.apply
+
+
 def reverse_gradient(x: Tensor, alpha: float) -> Tensor:
     """Identity forward; multiplies the gradient by ``-alpha`` backward."""
-    out: Tensor = _ReverseGradient.apply(x, alpha)  # type: ignore[no-untyped-call]
-    return out
+    return _apply_reverse_gradient(x, alpha)
 
 
 class VAEDANNNetworks(nn.Module):
