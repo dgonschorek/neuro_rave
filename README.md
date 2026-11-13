@@ -1,4 +1,6 @@
-# Neuro-RAVE: Reducing Batch Effects in Neuroscientific Time-Series Data
+# Neuro-RAVE <img src="assets/rave-logo.png" align="right" width="160" alt="Neuro-RAVE logo: a neuron and merging response traces" />
+
+Reducing batch effects in neuroscientific time-series data.
 
 [![CPU CI](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
