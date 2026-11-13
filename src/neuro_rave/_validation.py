@@ -45,7 +45,7 @@ def check_layout(windows: NDArray[np.float32], input_shape: tuple[int, ...]) -> 
     if windows.shape[1:] != input_shape:
         expected = "(samples, " + ", ".join(str(d) for d in input_shape) + ")"
         raise ValueError(
-            f"X has shape {windows.shape}, but the model was fitted on windows shaped "
+            f"X has shape {windows.shape}, but the model was fitted on samples shaped "
             f"{expected}. Inference requires the same time length and channel layout."
         )
 
