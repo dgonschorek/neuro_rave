@@ -1,7 +1,7 @@
 [project]
 name = "neuro-rave"
-version = "0.1.0"
-description = "RAVE and RAVE+: adversarial removal of domain (session) effects from time-series windows"
+version = "0.2.0"
+description = "RAVE, RAVE+ and evaluation tools for reducing domain (session) effects in time-series data"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
@@ -14,13 +14,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Only for examples/quickstart.ipynb; the package itself needs just torch and numpy.
+# neuro_rave.evaluation.domain_probe fits scikit-learn classifiers; everything else needs only numpy/torch.
+evaluation = [
+    "scikit-learn>=1.3",
+]
+# Only for the example notebooks; the package itself needs just torch and numpy.
 notebook = [
+    "scikit-learn>=1.3",
     "jupyterlab>=4.0",
     "ipykernel>=6.29",
     "matplotlib>=3.8",
 ]
 dev = [
+    "scikit-learn>=1.3",
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.6",

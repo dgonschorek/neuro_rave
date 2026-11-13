@@ -205,5 +205,5 @@ def test_cuda_unavailable_is_reported():
 def test_public_api_and_version():
     import neuro_rave
 
-    assert set(neuro_rave.__all__) == {"RAVE", "RAVEPlus", "__version__"}
+    assert set(neuro_rave.__all__) == {"RAVE", "RAVEPlus", "VAEDANN", "__version__"}
     assert isinstance(neuro_rave.__version__, str) and neuro_rave.__version__

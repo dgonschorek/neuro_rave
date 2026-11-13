@@ -49,7 +49,7 @@ jobs:
         if: matrix.minimum == false
         run: |
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install '.[dev,notebook]' nbconvert
+          python -m pip install '.[evaluation,dev,notebook]' nbconvert
       - name: Run tests against the installed package
         working-directory: ${{ runner.temp }}
         run: |
@@ -71,7 +71,7 @@ jobs:
           python -m ruff check src tests examples
           python -m ruff format --check src tests examples
           python -m mypy src
-      - name: Execute the quickstart notebook
+      - name: Execute the example notebooks
         if: matrix.minimum == false
         working-directory: ${{ runner.temp }}
         run: |
@@ -80,11 +80,16 @@ jobs:
           from pathlib import Path
           from shutil import copyfile
 
-          notebook = Path(os.environ['GITHUB_WORKSPACE']) / 'examples' / 'quickstart.ipynb'
-          copyfile(notebook, 'quickstart.ipynb')
+          examples = Path(os.environ['GITHUB_WORKSPACE']) / 'examples'
+          for name in ('quickstart.ipynb', 'compare_methods.ipynb'):
+              copyfile(examples / name, name)
           PY
           python -m ipykernel install --user --name neuro-rave-ci
           python -m nbconvert --to notebook --execute \
             --ExecutePreprocessor.kernel_name=neuro-rave-ci \
             --ExecutePreprocessor.timeout=180 \
             --output quickstart-executed.ipynb quickstart.ipynb
+          python -m nbconvert --to notebook --execute \
+            --ExecutePreprocessor.kernel_name=neuro-rave-ci \
+            --ExecutePreprocessor.timeout=600 \
+            --output compare_methods-executed.ipynb compare_methods.ipynb
