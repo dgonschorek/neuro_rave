@@ -12,23 +12,24 @@ Neuro-RAVE is a PyTorch package for reducing inter-experimental variability (bat
 - **RAVE+ (semi-supervised)** adds a classification objective on the labeled samples. This encourages the embedding to retain class-relevant information and supports label prediction for unlabeled time series, including in other domains.
 - **VAEDANN (experimental baseline)** is a variational autoencoder with a gradient-reversal domain adversary and an optional class head. It comes from an analysis of retinal ganglion cell and superior colliculus recordings and is included as a further baseline to compare against, [under tested conditions](#vaedann-tested-conditions).
 - **`neuro_rave.evaluation`** scores any method on held-out data: reconstruction against a training-mean reference, classification, and how well a separate classifier predicts the domain from the embedding.
+- **`evaluation.assess_batch_effects`** (new in 0.3.0) checks, before any correction, how well the domain can be predicted from held-out responses, holding out whole recordings and optionally comparing within shared cell classes. It describes batch-associated differences; it does not decide whether they are technical or biological. [Workflow notebook](examples/batch_effects_workflow.ipynb)
 
 RAVE and RAVE+ were introduced by Gonschorek et al. at NeurIPS 2021. [Paper](https://proceedings.neurips.cc/paper_files/paper/2021/hash/1e5eeb40a3fce716b244599862fd2200-Abstract.html) · [Original research code](https://github.com/eulerlab/rave)
 
 ## Installation
 
-Install the tagged release in a Python 3.10 or newer environment. NumPy and PyTorch are the runtime dependencies. [v0.2.0 release](https://github.com/dgonschorek/neuro_rave/releases/tag/v0.2.0)
+Install the tagged release in a Python 3.10 or newer environment. NumPy and PyTorch are the runtime dependencies. [v0.3.0 release](https://github.com/dgonschorek/neuro_rave/releases/tag/v0.3.0)
 
 ```bash
-python -m pip install "git+https://github.com/dgonschorek/neuro_rave.git@v0.2.0"
+python -m pip install "git+https://github.com/dgonschorek/neuro_rave.git@v0.3.0"
 ```
 
 For CUDA training, install the matching PyTorch build first and set `device="cuda"`. [PyTorch installation](https://pytorch.org/get-started/locally/)
 
-`VAEDANN` and `neuro_rave.evaluation` were added in 0.2.0 (see the [changelog](CHANGELOG.md)). The `evaluation` extra adds scikit-learn, which `evaluation.domain_probe` needs; the other evaluation functions need only NumPy.
+`VAEDANN` and `neuro_rave.evaluation` were added in 0.2.0 and `evaluation.assess_batch_effects` in 0.3.0 (see the [changelog](CHANGELOG.md)). The `evaluation` extra adds scikit-learn, which `evaluation.domain_probe` and `evaluation.assess_batch_effects` need; the other evaluation functions need only NumPy.
 
 ```bash
-python -m pip install "neuro-rave[evaluation] @ git+https://github.com/dgonschorek/neuro_rave.git@v0.2.0"
+python -m pip install "neuro-rave[evaluation] @ git+https://github.com/dgonschorek/neuro_rave.git@v0.3.0"
 ```
 
 ### Quick example
@@ -54,6 +55,19 @@ y_pred = plus.predict(X)
 proba = plus.predict_proba(X)             # (200, 2), columns follow plus.classes_
 ```
 
+Before correcting anything, check how well the domain can be predicted from held-out responses. `groups` names the independent units that stay together, here recordings nested in the two sessions; whole recordings are held out in each split.
+
+```python
+from neuro_rave import evaluation as ev
+
+recordings = np.repeat([f"rec{i}" for i in range(10)], 20)   # 5 recordings per session
+report = ev.assess_batch_effects(X, domains, groups=recordings, n_splits=5)
+print("\n".join(report["messages"]))      # scores, chance level and design notes
+print("\n".join(report["limitations"]))   # what the numbers cannot tell you
+```
+
+The [batch-effects workflow notebook](examples/batch_effects_workflow.ipynb) goes from this check through class composition, the decision whether to correct, and a held-out comparison after correction.
+
 Score fitted models on held-out samples with `neuro_rave.evaluation`. Here a second set of random time series stands in for held-out recordings, and the experimental `VAEDANN` is compared with the same model with its adversary switched off.
 
 ```python
@@ -77,6 +91,7 @@ scores = ev.classification_scores(y_test, plus.predict(X_test), groups=domains_t
 
 ## Where should I start?
 
+- **Check whether and how your recordings differ, decide whether to correct, then compare on held-out recordings** in the [batch-effects workflow notebook](examples/batch_effects_workflow.ipynb).
 - **Try both models on synthetic data** in the [quickstart notebook](examples/quickstart.ipynb).
 - **Compare models and zero-adversary controls with the evaluation functions** in the [comparison notebook](examples/compare_methods.ipynb), which also shows a resumable grid search scored on validation data.
 - **Rerun the RGC-to-SC comparison** with your local copies of the data using the [research example](examples/rgc2sc/README.md).
@@ -125,7 +140,7 @@ python -m mypy src
 
 For a locked development and notebook environment, run `uv sync --extra dev --extra notebook`. [uv documentation](https://docs.astral.sh/uv/)
 
-CI runs the installed package tests on Linux with the minimum dependencies and on Windows with Python 3.13. The Windows job also installs the `evaluation`, `dev` and `notebook` extras, runs the development checks and executes both example notebooks. [CPU CI workflow](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml)
+CI runs the installed package tests on Linux with the minimum dependencies and on Windows with Python 3.13. The Windows job also installs the `evaluation`, `dev` and `notebook` extras, runs the development checks and executes the three example notebooks. [CPU CI workflow](https://github.com/dgonschorek/neuro_rave/actions/workflows/ci.yml)
 
 ## Design decisions and structure
 
@@ -134,9 +149,10 @@ The encoder, decoder, domain discriminator and RAVE+ class head are small ReLU n
 | Path | Contents |
 | --- | --- |
 | [`src/neuro_rave/models.py`](src/neuro_rave/models.py) | Public `RAVE`, `RAVEPlus` and experimental `VAEDANN` classes |
-| [`src/neuro_rave/evaluation.py`](src/neuro_rave/evaluation.py) | Evaluation functions for any method's outputs |
-| [`src/neuro_rave/`](src/neuro_rave/) | Networks, training loops (`_training.py` for RAVE, `_vaedann.py` for VAEDANN) and input validation |
-| [`tests/`](tests/) | CPU tests for the API, training, evaluation and validation |
+| [`src/neuro_rave/evaluation.py`](src/neuro_rave/evaluation.py) | Evaluation functions for any method's outputs, including the pre-correction batch diagnostic |
+| [`src/neuro_rave/`](src/neuro_rave/) | Networks, training loops (`_training.py` for RAVE, `_vaedann.py` for VAEDANN), split checks (`_splits.py`) and input validation |
+| [`tests/`](tests/) | CPU tests for the API, training, evaluation, batch diagnostic and validation |
+| [`examples/batch_effects_workflow.ipynb`](examples/batch_effects_workflow.ipynb) | Synthetic end-to-end workflow: diagnose, decide, correct, compare on held-out recordings |
 | [`examples/quickstart.ipynb`](examples/quickstart.ipynb) | Synthetic walkthrough of RAVE and RAVE+ |
 | [`examples/compare_methods.ipynb`](examples/compare_methods.ipynb) | Synthetic comparison of all models with the evaluation functions |
 | [`examples/rgc2sc/`](examples/rgc2sc/) | Research example for the RGC-to-SC recordings (data not included) |
@@ -217,10 +233,24 @@ The objective follows equations (3) and (4) of the paper. The implementation ave
 
 ### Check the result on your own data
 
+- Before correcting, run `evaluation.assess_batch_effects` with `groups` set to your independent units (usually recordings). After correcting, run it again on held-out recordings with the same `splits`, so the scores are comparable.
 - Hold out whole recordings or sessions within each domain when possible. Compare reconstruction error per domain and, where labels are available, class separability across domains against a `domain_weight=0` fit (`evaluation.reconstruction_scores`, `evaluation.classification_scores`).
 - Train a separate classifier to predict the domain from held-out embeddings (`evaluation.domain_probe`). Compare its balanced accuracy with chance and with the `domain_weight=0` fit. Use the training discriminator loss only as a training diagnostic.
 - Test several seeds and weights. If class and domain are confounded, removing domain information can also remove class information.
 - Read the scores together. A lower domain probe alone does not show a useful correction: some differences between recordings can be biological. Remaining domain information alone is not a failure either.
+
+<details>
+<summary>What the batch diagnostic can and cannot tell you</summary>
+
+`assess_batch_effects` answers one question: how well can domain identity be predicted from held-out responses, under your sampling and split design? It reports pooled held-out scores of a linear and a k-NN probe with their baselines (chance is 1 / number of domains), the splits and settings used, and design notes.
+
+- **Batch-associated is not the same as technical.** Differences can come from cell-type composition, animal, tissue, experimental condition or recording compartment as well as from acquisition. With labels `y`, the function reports the class composition per domain and the domain predictability within each class shared by several domains. Classes labelled in only one domain cannot be disentangled from it.
+- **Chance-level scores do not prove that there are no differences**, and a lower score after correction is not by itself a better representation. Different biological sources need not become indistinguishable.
+- **Split design matters.** With `groups`, whole groups are held out and every domain must have at least `n_splits` groups; `groups=domains` is rejected, because a domain held out as one group cannot be in the probe's training data. Without `groups`, samples are split individually, which assumes they are independent and can inflate scores. If each domain is one session, held-out cells describe separation between known sessions, not identification of unseen ones.
+- **Representations must be evaluated on data their model did not see.** Embeddings from a model trained on all samples do not become an independent test because the probe has a train/test split.
+- Scaling and balancing are fitted inside each training part. No significance test is performed; split-to-split variation is not a confidence interval.
+
+</details>
 
 The adversarial term rewards higher domain cross-entropy, which has no upper bound. Large adversarial weights or long training can destabilize reconstruction. If held-out error approaches or exceeds the variance of your data, try a lower weight or fewer epochs.
 

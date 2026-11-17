@@ -12,4 +12,4 @@ from neuro_rave.models import RAVE, VAEDANN, RAVEPlus
 
 __all__ = ["RAVE", "RAVEPlus", "VAEDANN", "__version__"]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

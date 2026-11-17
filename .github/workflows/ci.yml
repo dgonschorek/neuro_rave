@@ -81,7 +81,7 @@ jobs:
           from shutil import copyfile
 
           examples = Path(os.environ['GITHUB_WORKSPACE']) / 'examples'
-          for name in ('quickstart.ipynb', 'compare_methods.ipynb'):
+          for name in ('quickstart.ipynb', 'compare_methods.ipynb', 'batch_effects_workflow.ipynb'):
               copyfile(examples / name, name)
           PY
           python -m ipykernel install --user --name neuro-rave-ci
@@ -93,3 +93,7 @@ jobs:
             --ExecutePreprocessor.kernel_name=neuro-rave-ci \
             --ExecutePreprocessor.timeout=600 \
             --output compare_methods-executed.ipynb compare_methods.ipynb
+          python -m nbconvert --to notebook --execute \
+            --ExecutePreprocessor.kernel_name=neuro-rave-ci \
+            --ExecutePreprocessor.timeout=600 \
+            --output batch_effects_workflow-executed.ipynb batch_effects_workflow.ipynb
