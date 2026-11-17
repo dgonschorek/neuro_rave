@@ -10,7 +10,8 @@ are never reinterpreted as array positions.
 
 ``reconstruction_scores``, ``classification_scores``, ``response_correlation``,
 ``centroid_similarity``, ``best_matches`` and ``matching_agreement`` need only NumPy.
-``domain_probe`` fits a scikit-learn classifier and needs the ``evaluation`` extra::
+``domain_probe`` and ``assess_batch_effects`` fit scikit-learn classifiers and need the
+``evaluation`` extra::
 
     python -m pip install "neuro-rave[evaluation]"
 """
@@ -22,12 +23,16 @@ import importlib
 import math
 from collections import Counter
 from collections.abc import Hashable, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from neuro_rave import _splits
+
 __all__ = [
+    "assess_batch_effects",
     "best_matches",
     "centroid_similarity",
     "classification_scores",
@@ -339,7 +344,48 @@ def domain_probe(
     unseen = set(db) - set(classes)
     if unseen:
         raise ValueError(f"test domains absent from training: {sorted(map(repr, unseen))}.")
+    return _probe_core(
+        a,
+        da,
+        b,
+        db,
+        classes,
+        kind=kind,
+        n_neighbors=n_neighbors,
+        C=C,
+        balance=balance,
+        max_train_per_domain=max_train_per_domain,
+        standardize=standardize,
+        seed=seed,
+    ).result
 
+
+@dataclass(frozen=True)
+class _ProbeRun:
+    """A probe result plus the per-test-sample arrays that pooled summaries need."""
+
+    result: dict[str, Any]
+    test_codes: NDArray[np.int64]
+    nll: NDArray[np.float64]
+    prior_nll: NDArray[np.float64]
+
+
+def _probe_core(
+    a: NDArray[np.float64],
+    da: NDArray[Any],
+    b: NDArray[np.float64],
+    db: NDArray[Any],
+    classes: list[Any],
+    *,
+    kind: str,
+    n_neighbors: int,
+    C: float,  # noqa: N803  (scikit-learn's name)
+    balance: bool,
+    max_train_per_domain: int | None,
+    standardize: bool,
+    seed: int,
+) -> _ProbeRun:
+    """Fit the probe on (a, da) and score it on (b, db); inputs are already validated."""
     rng = np.random.default_rng(seed)
     counts = {c: int((da == c).sum()) for c in classes}
     per = min(counts.values()) if balance else None
@@ -398,7 +444,7 @@ def domain_probe(
     prior = np.bincount(ya, minlength=k_cls) / len(ya)
     prior_nll = -np.log(np.clip(prior[yb], _EPS, 1.0))
     test_counts = np.bincount(yb, minlength=k_cls)
-    return {
+    result = {
         "kind": kind,
         "classes": _to_list(classes),
         "balanced_accuracy": float(recall.mean()),
@@ -417,6 +463,545 @@ def domain_probe(
         },
         "test_counts": {c: int(n) for c, n in zip(_to_list(classes), test_counts, strict=True)},
         "settings": settings,
+    }
+    return _ProbeRun(result, yb.astype(np.int64), nll, prior_nll)
+
+
+# --------------------------------------------------------------------------------------------
+# batch diagnostic
+# --------------------------------------------------------------------------------------------
+
+_PROBE_KINDS = ("linear", "knn")
+_QUESTION = (
+    "How well can domain identity be predicted from held-out samples, under the supplied sampling "
+    "and split design?"
+)
+
+
+def _codes(values: NDArray[Any], order: list[Any]) -> NDArray[np.int64]:
+    index = {v: i for i, v in enumerate(order)}
+    return np.array([index[v] for v in values], dtype=np.int64)
+
+
+def _n_train_used(train_codes: NDArray[np.int64], k: int, balance: bool, cap: int | None) -> int:
+    counts = np.bincount(train_codes, minlength=k).astype(np.int64)
+    per: int | None = int(np.min(counts)) if balance else None
+    if cap is not None:
+        per = cap if per is None else min(per, cap)
+    return int(np.sum(counts) if per is None else np.sum(np.minimum(counts, per)))
+
+
+def _probe_over_splits(
+    a: NDArray[np.float64],
+    d: NDArray[Any],
+    splits: list[_splits.Split],
+    classes: list[Any],
+    kind: str,
+    settings: dict[str, Any],
+    seed: int,
+) -> dict[str, Any]:
+    """Run one probe on every split (seed + split index) and pool the test predictions."""
+    runs = [
+        _probe_core(a[tr], d[tr], a[te], d[te], classes, kind=kind, seed=seed + i, **settings)
+        for i, (tr, te) in enumerate(splits)
+    ]
+    k = len(classes)
+    cm = np.sum([r.result["confusion_matrix"] for r in runs], axis=0)
+    support = cm.sum(axis=1)
+    codes = np.concatenate([r.test_codes for r in runs])
+    nll = np.concatenate([r.nll for r in runs])
+    prior_nll = np.concatenate([r.prior_nll for r in runs])
+    chance = 1.0 / k
+    ba = [float(r.result["balanced_accuracy"]) for r in runs]
+    ll = [float(r.result["log_loss"]) for r in runs]
+    return {
+        "pooled": {
+            "balanced_accuracy": float(np.mean(np.diag(cm) / support)),
+            "accuracy": float(np.trace(cm) / support.sum()),
+            "log_loss": float(nll.mean()),
+            "balanced_log_loss": float(np.mean([nll[codes == i].mean() for i in range(k)])),
+            "chance_balanced_accuracy": chance,
+            "majority_accuracy": float(np.max(support) / np.sum(support)),
+            "uniform_log_loss": float(np.log(k)),
+            "prior_log_loss": float(prior_nll.mean()),
+            "confusion_matrix": cm,
+            "classes": _to_list(classes),
+            "n_scored": int(support.sum()),
+        },
+        "split_summary": {
+            "balanced_accuracy": {
+                "values": ba,
+                "mean": float(np.mean(ba)),
+                "min": float(np.min(ba)),
+                "max": float(np.max(ba)),
+            },
+            "log_loss": {"values": ll, "mean": float(np.mean(ll))},
+            "n_splits_above_chance": int(sum(v > chance for v in ba)),
+            "n_splits": len(runs),
+        },
+        "per_split": [r.result for r in runs],
+    }
+
+
+def _probe_message(kind: str, res: dict[str, Any]) -> list[str]:
+    pooled, summ = res["pooled"], res["split_summary"]
+    above, total = summ["n_splits_above_chance"], summ["n_splits"]
+    lines = [
+        f"{kind} probe: pooled balanced accuracy {pooled['balanced_accuracy']:.3f} "
+        f"(chance {pooled['chance_balanced_accuracy']:.3f}; splits "
+        f"{summ['balanced_accuracy']['min']:.3f}-{summ['balanced_accuracy']['max']:.3f}, "
+        f"above chance in {above} of {total})."
+    ]
+    if above == total:
+        lines.append(
+            f"Batch-associated differences are detectable with the {kind} probe under this split "
+            "design."
+        )
+    else:
+        lines.append(
+            f"The {kind} probe did not exceed chance in every split; this does not show that the "
+            "domains are equivalent."
+        )
+    return lines
+
+
+def _label_analysis(
+    a: NDArray[np.float64],
+    d: NDArray[Any],
+    dcode: NDArray[np.int64],
+    domain_ids: list[Any],
+    lab: NDArray[Any],
+    g: NDArray[Any] | None,
+    explicit: list[_splits.Split] | None,
+    *,
+    kinds: list[str],
+    settings: dict[str, Any],
+    n_splits: int,
+    n_repeats: int,
+    max_classes: int,
+    seed: int,
+) -> tuple[dict[str, Any], list[str]]:
+    """Class composition per domain and domain predictability within shared classes."""
+    k = len(domain_ids)
+    known = np.array([v is not None for v in lab], dtype=bool)
+    class_ids = _ordered(lab[known], "y")
+    counts = np.zeros((k, len(class_ids)), dtype=np.int64)
+    for i, c in enumerate(class_ids):
+        is_c = np.array([v == c for v in lab], dtype=bool) & known
+        counts[:, i] = np.bincount(dcode[is_c], minlength=k)
+    dom_list, cls_list = _to_list(domain_ids), _to_list(class_ids)
+    present = counts > 0
+    n_domains_with = present.sum(axis=0)
+    labelled = counts.sum(axis=1)
+    shares = counts / np.maximum(labelled[:, None], 1)
+    has_labels = labelled > 0
+    max_share_diff = (
+        float(np.max(shares[has_labels].max(axis=0) - shares[has_labels].min(axis=0)))
+        if has_labels.sum() >= 2 and class_ids
+        else float("nan")
+    )
+    confounded = [c for c, m in zip(cls_list, n_domains_with, strict=True) if m == 1]
+    out: dict[str, Any] = {
+        "classes": cls_list,
+        "counts": {
+            dom: {c: int(counts[i, j]) for j, c in enumerate(cls_list)}
+            for i, dom in enumerate(dom_list)
+        },
+        "unknown_per_domain": {
+            dom: int((~known & (dcode == i)).sum()) for i, dom in enumerate(dom_list)
+        },
+        "n_unknown": int((~known).sum()),
+        "domains_per_class": {
+            c: [dom_list[i] for i in np.flatnonzero(present[:, j])] for j, c in enumerate(cls_list)
+        },
+        "confounded_classes": confounded,
+        "max_class_share_difference": max_share_diff,
+        "within_class": {},
+        "max_classes": max_classes,
+    }
+    msgs: list[str] = []
+    if not class_ids:
+        msgs.append("y contains no known labels; label analyses were skipped.")
+        return out, msgs
+    if np.isfinite(max_share_diff):
+        msgs.append(
+            "Labelled class proportions differ between domains by up to "
+            f"{max_share_diff:.2f} (absolute difference in share). Composition differences alone "
+            "can make domains predictable."
+        )
+    for c in confounded:
+        dom = out["domains_per_class"][c][0]
+        msgs.append(
+            f"Class {c!r} is labelled in only one domain ({dom!r}); class and domain cannot be "
+            "disentangled for this class."
+        )
+
+    order = sorted(
+        (j for j in range(len(class_ids)) if n_domains_with[j] >= 2),
+        key=lambda j: -int(counts[:, j].sum()),
+    )
+    for rank, j in enumerate(order):
+        c = cls_list[j]
+        entry: dict[str, Any] = {"n_samples": int(counts[:, j].sum())}
+        out["within_class"][c] = entry
+        if rank >= max_classes:
+            entry.update(status="skipped", reason=f"outside the max_classes={max_classes} budget")
+            continue
+        rows = np.flatnonzero(known & np.array([v == class_ids[j] for v in lab], dtype=bool))
+        sub_d = dcode[rows]
+        sub_g = None if g is None else _codes(g[rows], _ordered(g[rows], "groups"))
+        units = _splits.unit_coverage(sub_d, sub_g, k)
+        entry["units_per_domain"] = {
+            dom: int(units[i]) for i, dom in enumerate(dom_list) if counts[i, j] > 0
+        }
+        excluded: dict[Any, str] = {}
+        if explicit is None:
+            keep = [i for i in range(k) if units[i] >= n_splits]
+            for i in range(k):
+                if counts[i, j] > 0 and units[i] < n_splits:
+                    excluded[dom_list[i]] = (
+                        f"{int(units[i])} {'group' if g is not None else 'sample'}(s) < "
+                        f"n_splits={n_splits}"
+                    )
+        else:
+            pos = np.full(len(lab), -1)
+            pos[rows] = np.arange(len(rows))
+            keep = []
+            for i in range(k):
+                if counts[i, j] == 0:
+                    continue
+                ok = all(
+                    (sub_d[pos[tr][pos[tr] >= 0]] == i).any()
+                    and (sub_d[pos[te][pos[te] >= 0]] == i).any()
+                    for tr, te in explicit
+                )
+                if ok:
+                    keep.append(i)
+                else:
+                    excluded[dom_list[i]] = "not in both parts of every supplied split"
+        entry["excluded_domains"] = excluded
+        if len(keep) < 2:
+            entry.update(status="skipped", reason="fewer than two domains with enough data")
+            continue
+        sel = np.isin(sub_d, keep)
+        rows, sub_d = rows[sel], sub_d[sel]
+        names = [domain_ids[i] for i in keep]
+        sub_codes = _codes(np.array([domain_ids[i] for i in sub_d], dtype=object), names)
+        sub_g = None if g is None else _codes(g[rows], _ordered(g[rows], "groups"))
+        try:
+            if explicit is None:
+                class_splits, _, _, _ = _splits.generate(
+                    sub_codes,
+                    sub_g,
+                    names,
+                    n_splits=n_splits,
+                    n_repeats=n_repeats,
+                    seed=seed,
+                    model_selection=_sklearn("model_selection"),
+                )
+            else:
+                pos = np.full(len(lab), -1)
+                pos[rows] = np.arange(len(rows))
+                class_splits = []
+                for s, (tr, te) in enumerate(explicit):
+                    tr_c, te_c = pos[tr][pos[tr] >= 0], pos[te][pos[te] >= 0]
+                    _splits.check_split(tr_c, te_c, sub_codes, sub_g, names, f"split {s}")
+                    class_splits.append((tr_c.astype(np.int64), te_c.astype(np.int64)))
+        except ValueError as err:
+            entry.update(status="skipped", reason=str(err))
+            continue
+        entry.update(status="assessed", domains=_to_list(names), probes={}, skipped_probes={})
+        sub_a, sub_lab_d = a[rows], d[rows]
+        for kind in kinds:
+            if kind == "knn":
+                smallest = min(
+                    _n_train_used(
+                        sub_codes[tr],
+                        len(names),
+                        settings["balance"],
+                        settings["max_train_per_domain"],
+                    )
+                    for tr, _ in class_splits
+                )
+                if smallest < settings["n_neighbors"]:
+                    entry["skipped_probes"][kind] = (
+                        f"n_neighbors={settings['n_neighbors']} exceeds the {smallest} "
+                        "probe-training samples in at least one split"
+                    )
+                    continue
+            res = _probe_over_splits(sub_a, sub_lab_d, class_splits, names, kind, settings, seed)
+            entry["probes"][kind] = {"pooled": res["pooled"], "split_summary": res["split_summary"]}
+            pooled = res["pooled"]
+            msgs.append(
+                f"Within class {c!r}, {kind} probe: pooled balanced accuracy "
+                f"{pooled['balanced_accuracy']:.3f} (chance "
+                f"{pooled['chance_balanced_accuracy']:.3f}, {len(names)} domains)."
+            )
+    return out, msgs
+
+
+def assess_batch_effects(
+    X: ArrayLike,
+    domains: ArrayLike,
+    *,
+    groups: ArrayLike | None = None,
+    y: ArrayLike | None = None,
+    probes: Sequence[Literal["linear", "knn"]] = ("linear", "knn"),
+    n_splits: int | None = None,
+    n_repeats: int | None = None,
+    splits: Sequence[tuple[ArrayLike, ArrayLike]] | None = None,
+    n_neighbors: int = 15,
+    C: float = 1.0,  # noqa: N803  (scikit-learn's name)
+    balance: bool = True,
+    max_train_per_domain: int | None = None,
+    standardize: bool = True,
+    max_classes: int = 10,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """How well domain identity can be predicted from held-out samples, before any correction.
+
+    Cross-validates :func:`domain_probe` (k-NN and/or logistic regression) on the samples
+    themselves. It describes batch-associated differences under the supplied sampling and split
+    design. It does not decide whether they are technical or biological, whether correction is
+    needed, or whether a lower score means a better representation. No model is trained other
+    than the probes, and no significance test is performed. Needs scikit-learn
+    (``neuro-rave[evaluation]``).
+
+    Splits: every split has every domain in both its training and its test part. With ``groups``,
+    whole groups are held out (stratified group K-fold) and no group appears on both sides; each
+    domain needs at least ``n_splits`` groups, so ``groups=domains`` is rejected: a domain that is
+    one indivisible group cannot be both trained on and tested. Without ``groups``, samples are
+    split individually, which assumes they are independent. Explicit ``splits`` are validated the
+    same way.
+    Designs that cannot meet these rules raise ``ValueError``; there is no fallback to another
+    design. Scaling (``standardize``) and balancing are fitted on each training part only.
+
+    Args:
+        X: Time-series data (samples, time) or (samples, time, channels), or a feature or embedding
+            matrix (samples, features). Finite values; flattened per sample; not modified.
+        domains: One domain ID (string or integer) per sample; at least two domains.
+        groups: Optional ID per sample of the unit that must stay together (cell, recording,
+            animal, ...), nested within or across domains as in your design.
+        y: Optional biological class label per sample, ``None`` where unknown. Enables the class
+            composition table and domain predictability within classes shared by domains.
+        probes: Probe kinds to run on identical splits: ``"linear"`` and/or ``"knn"``.
+        n_splits: Folds of the generated split (default 5, minimum 2). Not allowed with ``splits``.
+        n_repeats: Repetitions with different shuffles (default 1). Not allowed with ``splits``.
+        splits: Explicit ``(train_indices, test_indices)`` pairs of integer positions instead of
+            generated folds.
+        n_neighbors, C, balance, max_train_per_domain, standardize: Probe settings, as in
+            :func:`domain_probe`. With ``balance=True`` the probe trains on the same number of
+            samples per domain.
+        max_classes: Budget for the within-class analysis: at most this many shared classes (the
+            most labelled first) are assessed; the others are reported as skipped. 0 disables it.
+        seed: Seed for the split shuffles and the probes (split ``i`` uses ``seed + i``). Global
+            random state is not touched.
+
+    Returns:
+        A dictionary with
+        ``question``; ``n_samples``, ``n_features``, ``sample_shape``; ``domains`` (original IDs,
+        sorted) and ``domain_counts``; ``groups`` (``None`` or ``n_groups``,
+        ``groups_per_domain``, ``n_groups_spanning_domains``); ``split`` (``strategy``
+        ``"stratified_group_kfold"``, ``"stratified_kfold"`` or ``"explicit"``, ``n_folds``,
+        ``n_repeats``, ``n_distinct_repeats``, ``random_states``, ``indices`` as a list of
+        ``{"train", "test"}`` arrays, ``n_scored_samples``, ``times_scored``); ``settings``;
+        ``probes``, per kind a dict with
+        ``pooled`` (scores from all test predictions pooled across splits: ``balanced_accuracy``,
+        ``accuracy``, ``log_loss``, ``balanced_log_loss``, baselines ``chance_balanced_accuracy``,
+        ``majority_accuracy``, ``uniform_log_loss``, ``prior_log_loss``, ``confusion_matrix``,
+        ``classes``, ``n_scored``), ``split_summary`` (per-split balanced accuracy and log loss,
+        ``n_splits_above_chance``) and ``per_split`` (the :func:`domain_probe` result of each
+        split);
+        ``labels`` (``None`` without ``y``; otherwise ``classes``, domain-by-class ``counts``,
+        ``unknown_per_domain``, ``domains_per_class``, ``confounded_classes``,
+        ``max_class_share_difference`` and ``within_class``, per class ``status`` "assessed" or
+        "skipped" with ``reason``, coverage, and pooled probe results); ``messages`` (descriptive
+        summary); ``limitations``; ``significance_test`` (``"none"``).
+        Each sample is scored once per repeat; split-to-split variation reflects overlapping
+        training sets and is not an independent confidence interval.
+    """
+    kinds: list[str] = list(probes)
+    if not kinds or len(set(kinds)) != len(kinds) or any(k not in _PROBE_KINDS for k in kinds):
+        raise ValueError(f"probes must be distinct entries of {_PROBE_KINDS}; got {probes!r}.")
+    for name, value, low in (("n_neighbors", n_neighbors, 1), ("max_classes", max_classes, 0)):
+        if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < low:
+            raise ValueError(f"{name} must be an integer >= {low}; got {value!r}.")
+    if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)) or seed < 0:
+        raise ValueError(f"seed must be a non-negative integer; got {seed!r}.")
+    sample_shape = [int(s) for s in np.shape(X)[1:]]
+    a = _samples(X, "X")
+    n = a.shape[0]
+    d = _labels(domains, "domains", n, allow_missing=False)
+    domain_ids = _ordered(d, "domains")
+    if len(domain_ids) < 2:
+        raise ValueError("domains must contain at least two domains.")
+    dcode = _codes(d, domain_ids)
+    k = len(domain_ids)
+    g = None if groups is None else _labels(groups, "groups", n, allow_missing=False)
+    gcode = None if g is None else _codes(g, _ordered(g, "groups"))
+    lab = None if y is None else _labels(y, "y", n, allow_missing=True)
+
+    if splits is not None:
+        if n_splits is not None or n_repeats is not None:
+            raise ValueError("n_splits and n_repeats apply to generated splits; omit them.")
+        split_list = _splits.validate_explicit(splits, n, dcode, gcode, domain_ids)
+        states: list[int] = []
+        strategy, n_folds, reps, distinct = "explicit", len(split_list), 1, 1
+    else:
+        n_folds = 5 if n_splits is None else n_splits
+        reps = 1 if n_repeats is None else n_repeats
+        for name, value, low in (("n_splits", n_folds, 2), ("n_repeats", reps, 1)):
+            if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < low:
+                raise ValueError(f"{name} must be an integer >= {low}; got {value!r}.")
+        split_list, strategy, states, distinct = _splits.generate(
+            dcode,
+            gcode,
+            domain_ids,
+            n_splits=int(n_folds),
+            n_repeats=int(reps),
+            seed=int(seed),
+            model_selection=_sklearn("model_selection"),
+        )
+
+    settings: dict[str, Any] = {
+        "n_neighbors": int(n_neighbors),
+        "C": float(C),
+        "balance": bool(balance),
+        "max_train_per_domain": max_train_per_domain,
+        "standardize": bool(standardize),
+    }
+    probe_results = {
+        kind: _probe_over_splits(a, d, split_list, domain_ids, kind, settings, int(seed))
+        for kind in kinds
+    }
+    times = np.bincount(np.concatenate([te for _, te in split_list]), minlength=n)
+    scored = times[times > 0]
+    dom_list = _to_list(domain_ids)
+
+    messages: list[str] = []
+    limitations = [
+        "Domain predictability does not identify its cause: biological composition, animal, "
+        "tissue, experimental condition, compartment and acquisition can all contribute.",
+        "A score near chance does not prove that the domains are equivalent; another probe, other "
+        "features or more data may separate them.",
+        "A lower score after correction is not by itself evidence of a better representation; "
+        "assess reconstruction and biological information on the same splits.",
+        "Split-to-split variation comes from overlapping training sets; it is not an independent "
+        "confidence interval.",
+        "If X is an embedding from a model trained on these samples, the probe's split does not "
+        "make this an independent test: train the model on training groups only and assess "
+        "held-out ones.",
+        "No significance test was performed.",
+    ]
+    group_info: dict[str, Any] | None = None
+    if gcode is not None:
+        units = _splits.unit_coverage(dcode, gcode, k)
+        spanning = int(sum(len(np.unique(dcode[gcode == u])) > 1 for u in np.unique(gcode)))
+        group_info = {
+            "n_groups": int(np.unique(gcode).size),
+            "groups_per_domain": {dom: int(units[i]) for i, dom in enumerate(dom_list)},
+            "n_groups_spanning_domains": spanning,
+        }
+    if strategy == "stratified_group_kfold":
+        assert group_info is not None
+        per = list(group_info["groups_per_domain"].values())
+        messages.append(
+            f"Grouped splits: {group_info['n_groups']} groups ({min(per)}-{max(per)} per domain), "
+            f"{n_folds} folds x {reps} repeat(s); no group is in both parts of a split."
+        )
+        limitations.append(
+            "Held-out groups come from domains that also appear in training: this measures how "
+            "well known domains are recognised in new groups, not identification of unseen "
+            "domains. If each domain is a single session, it describes separation between known "
+            "sessions."
+        )
+    elif strategy == "stratified_kfold":
+        messages.append(
+            f"Sample-level splits (no groups): {n_folds} folds x {reps} repeat(s), stratified by "
+            "domain."
+        )
+        limitations.append(
+            "Samples were split individually, which assumes they are independent. Related samples "
+            "(the same cell, recording or animal) on both sides can inflate the scores; pass "
+            "groups to hold them out together."
+        )
+    else:
+        messages.append(
+            f"{len(split_list)} explicit split(s), checked for bounds, duplicates, overlap and "
+            f"domain coverage{' and group separation' if gcode is not None else ''}."
+        )
+    if group_info is not None:
+        messages.append(
+            f"{n} samples in {group_info['n_groups']} groups: the number of samples is not the "
+            "number of independent units."
+        )
+    if distinct < reps:
+        limitations.append(
+            f"Only {distinct} of {reps} repeats produced distinct splits (few groups per domain); "
+            "identical repeats add no information."
+        )
+    if reps > 1 or int(np.max(scored)) > 1:
+        limitations.append(
+            "Some samples are scored more than once (repeats or overlapping test parts); pooled "
+            "counts include every appearance."
+        )
+    for kind in kinds:
+        messages.extend(_probe_message(kind, probe_results[kind]))
+
+    label_info: dict[str, Any] | None = None
+    if lab is not None:
+        label_info, label_msgs = _label_analysis(
+            a,
+            d,
+            dcode,
+            domain_ids,
+            lab,
+            g,
+            split_list if strategy == "explicit" else None,
+            kinds=kinds,
+            settings=settings,
+            n_splits=int(n_folds),
+            n_repeats=int(reps),
+            max_classes=int(max_classes),
+            seed=int(seed),
+        )
+        messages.extend(label_msgs)
+        limitations.append(
+            "Domain predictability within a class narrows, but does not identify, the cause: "
+            "sub-types, animals or conditions within a class can still differ between domains."
+        )
+
+    return {
+        "question": _QUESTION,
+        "n_samples": int(n),
+        "n_features": int(a.shape[1]),
+        "sample_shape": sample_shape,
+        "domains": dom_list,
+        "domain_counts": {
+            dom: int(c) for dom, c in zip(dom_list, np.bincount(dcode, minlength=k), strict=True)
+        },
+        "groups": group_info,
+        "split": {
+            "strategy": strategy,
+            "n_folds": int(n_folds),
+            "n_repeats": int(reps),
+            "n_distinct_repeats": int(distinct),
+            "random_states": states,
+            "indices": [{"train": tr, "test": te} for tr, te in split_list],
+            "n_scored_samples": int(scored.size),
+            "times_scored": {"min": int(np.min(scored)), "max": int(np.max(scored))},
+        },
+        "settings": {
+            "probes": kinds,
+            **settings,
+            "max_classes": int(max_classes),
+            "seed": int(seed),
+        },
+        "probes": probe_results,
+        "labels": label_info,
+        "messages": messages,
+        "limitations": limitations,
+        "significance_test": "none",
     }
 
 

@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the paper below."
 title: "neuro-rave: RAVE, RAVE+ and evaluation tools for reducing domain effects in time-series data"
-version: 0.2.0
-date-released: 2026-11-13
+version: 0.3.0
+date-released: 2026-11-17
 license: MIT
 repository-code: "https://github.com/dgonschorek/neuro_rave"
 authors:
